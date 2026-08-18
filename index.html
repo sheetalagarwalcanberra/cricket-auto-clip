@@ -33,7 +33,7 @@
 <body>
 <div class="app">
   <h1>🏏 Cricket Auto Clip</h1>
-  <div class="sub">V1 — automatic 4-second delivery clips</div>
+  <div class="sub">V1.1 — automatic 4-second delivery clips • high-resolution camera</div>
 
   <div class="card">
     <div class="videoWrap">
@@ -54,6 +54,7 @@
         <div><label>Mode</label><select id="mode"><option>Batting</option><option>Bowling</option></select></div>
         <div><label>Clip length</label><select id="clipLength"><option value="4000" selected>4 sec</option><option value="5000">5 sec</option><option value="6000">6 sec</option></select></div>
         <div><label>Camera</label><select id="facing"><option value="environment" selected>Rear</option><option value="user">Front</option></select></div>
+        <div><label>Video quality</label><select id="quality"><option value="best" selected>Best available (up to 4K)</option><option value="4k">UHD 4K (3840×2160)</option><option value="1080">Full HD (1920×1080)</option><option value="720">HD (1280×720)</option></select></div>
       </div>
       <details>
         <summary>Detection settings</summary>
@@ -72,6 +73,7 @@
         <div class="stat"><strong id="motionVal">0</strong><span>MOTION</span></div>
       </div>
       <div class="meter"><div id="motionBar"></div></div>
+      <p class="hint" id="cameraInfo">Resolution: not started</p>
       <p class="hint" id="hint">Start the camera, place phone behind the bowler, then start the auto session.</p>
       <button id="manualClip" class="secondary" style="width:100%" disabled>Save clip manually</button>
     </div>
@@ -86,7 +88,7 @@
   </div>
 
   <div class="card">
-    <div class="hint"><span class="warn">First-cut limitation:</span> this version detects a delivery from motion inside the blue zone; it does not yet recognise and track the cricket ball itself. Camera access normally requires HTTPS or localhost.</div>
+    <div class="hint"><span class="warn">First-cut limitation:</span> this version detects a delivery from motion inside the blue zone; it does not yet recognise and track the cricket ball itself. The app requests up to 4K UHD, but Chrome/Android and the phone camera decide the actual resolution. The live resolution is shown above.</div>
   </div>
 </div>
 <canvas id="motionCanvas" width="160" height="90"></canvas>
@@ -104,10 +106,18 @@
   }
   async function startCamera(){
     if(stream){stream.getTracks().forEach(t=>t.stop()); stream=null}
-    const constraints={audio:false, video:{facingMode:{ideal:$('facing').value}, width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:30,max:30}}};
+    const q=$('quality').value;
+    const target=q==='720'?{w:1280,h:720}:q==='1080'?{w:1920,h:1080}:{w:3840,h:2160};
+    const constraints={audio:false, video:{facingMode:{ideal:$('facing').value}, width:{ideal:target.w,max:target.w}, height:{ideal:target.h,max:target.h}, aspectRatio:{ideal:16/9}, frameRate:{ideal:30,max:30}}};
     try{
       stream=await navigator.mediaDevices.getUserMedia(constraints);
       preview.srcObject=stream; await preview.play();
+      const track=stream.getVideoTracks()[0];
+      const settings=track.getSettings ? track.getSettings() : {};
+      const rw=settings.width||preview.videoWidth||'?';
+      const rh=settings.height||preview.videoHeight||'?';
+      const rf=settings.frameRate?Math.round(settings.frameRate):'?';
+      $('cameraInfo').innerHTML='<span class="ok">Actual camera:</span> '+rw+'×'+rh+' • '+rf+' fps';
       $('startSession').disabled=false; $('manualClip').disabled=false; $('startCamera').textContent='Restart camera';
       setStatus('Camera ready'); $('hint').textContent='Position the phone, then start the auto session.';
       startMotionLoop();
@@ -149,7 +159,10 @@
     const parts=[];
     const mt=mimeType();
     let clipRecorder;
-    try{ clipRecorder=new MediaRecorder(stream, mt?{mimeType:mt,videoBitsPerSecond:3500000}:undefined); }
+    const vs=stream.getVideoTracks()[0]?.getSettings?.()||{};
+    const pixels=(vs.width||1280)*(vs.height||720);
+    const bitrate=pixels>=7000000?20000000:pixels>=1800000?10000000:6000000;
+    try{ clipRecorder=new MediaRecorder(stream, mt?{mimeType:mt,videoBitsPerSecond:bitrate}:undefined); }
     catch(e){ clipRecorder=new MediaRecorder(stream); }
     clipRecorder.ondataavailable=e=>{ if(e.data && e.data.size) parts.push(e.data); };
     clipRecorder.onstop=()=>{
@@ -194,6 +207,7 @@
   $('startSession').onclick=toggleSession;
   $('manualClip').onclick=()=>{ballNo++;$('balls').textContent=ballNo;triggerClip('Manual')};
   $('facing').onchange=()=>{if(stream) startCamera()};
+  $('quality').onchange=()=>{if(stream) startCamera()};
   $('clearClips').onclick=()=>{saved.forEach(c=>URL.revokeObjectURL(c.url));saved=[];$('clipsCount').textContent='0';renderClips()};
   window.addEventListener('beforeunload',()=>{if(stream)stream.getTracks().forEach(t=>t.stop());saved.forEach(c=>URL.revokeObjectURL(c.url))});
   renderClips();
